@@ -1,0 +1,5 @@
+imagenet_node:
+    prototxt_path: "/home/nvidia/catkin_ws/src/jetson-inference/build/aarch64/bin/networks/googlenet.prototxt"
+    model_path: "/home/nvidia/catkin_ws/src/jetson-inference/build/aarch64/bin/networks/bvlc_googlenet.caffemodel"
+    class_labels_path: "/home/nvidia/catkin_ws/src/jetson-inference/build/aarch64/bin/networks/ilsvrc12_synset_words.txt"
+

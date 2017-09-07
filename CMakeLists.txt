@@ -20,7 +20,7 @@ catkin_package(
 )
 
 # the library we are going to compile (has all of the nodelets in it)
-add_library(ros_deep_learning_nodelets src/ros_imagenet.cpp)
+add_library(ros_deep_learning_nodelets src/ros_imagenet.cpp src/ros_detectnet.cpp)
 # includes
 include_directories(
   ${catkin_INCLUDE_DIRS}

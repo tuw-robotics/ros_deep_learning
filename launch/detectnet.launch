@@ -2,16 +2,16 @@
     <arg name="image" default="/image_raw"/>
 
     <!-- set parameters -->
-    <rosparam  file="$(find ros_deep_learning)/config/paths_imagenet.yaml" command="load"/>
+    <rosparam  file="$(find ros_deep_learning)/config/paths_detectnet.yaml" command="load"/>
 
     <!-- Nodelet manager -->
     <node pkg="nodelet" type="nodelet" name="standalone_nodelet"  args="manager" output="screen"/>
 
     <!-- ros_imagenet nodelet -->
-    <node name="imagenet_node"
+    <node name="detectnet_node"
           pkg="nodelet" type="nodelet"
-          args="load ros_deep_learning/ros_imagenet standalone_nodelet"
-          output="screen">
+          args="load ros_deep_learning/ros_detectnet standalone_nodelet"
+          output="screen" >
           <remap from="~imin" to="$(arg image)"/>
     </node>
 
