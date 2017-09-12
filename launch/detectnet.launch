@@ -1,5 +1,6 @@
 <launch>
     <arg name="image" default="/image_raw"/>
+    <arg name="ground_plane" default="ground_plane"/>
 
     <!-- set parameters -->
     <rosparam  file="$(find ros_deep_learning)/config/paths_detectnet.yaml" command="load"/>
@@ -13,6 +14,7 @@
           args="load ros_deep_learning/ros_detectnet standalone_nodelet"
           output="screen" >
           <remap from="~imin" to="$(arg image)"/>
+          <remap from="~ground_plane" to="$(arg ground_plane)"/>
     </node>
 
     <!-- gst_camera nodelet 

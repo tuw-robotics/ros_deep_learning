@@ -40,6 +40,8 @@ void ros_detectnet::onInit()
     ROS_INFO("ros_detectnet: failed to initialize detectNet\n");
     return;
   }
+  
+  gpsub_ = private_nh.subscribe("ground_plane", 100, &ros_detectnet::groundPlaneCallback, this);
 
   // setup image transport
   image_transport::ImageTransport it(private_nh);
