@@ -7,10 +7,14 @@ find_package(catkin REQUIRED COMPONENTS
   roscpp
   sensor_msgs
   std_msgs
+  tuw_object_msgs
+  rwth_perception_people_msgs
+  
 )
 find_package(jetson-inference REQUIRED)
 find_package(CUDA REQUIRED)
 find_package(Qt4 REQUIRED)
+find_package(Eigen3 REQUIRED)
 include(${QT_USE_FILE})
 add_definitions(${QT_DEFINITIONS})
 
@@ -23,6 +27,7 @@ catkin_package(
 add_library(ros_deep_learning_nodelets src/ros_imagenet.cpp src/ros_detectnet.cpp)
 # includes
 include_directories(
+  include
   ${catkin_INCLUDE_DIRS}
   ${CUDA_INCLUDE_DIRS}
 )
