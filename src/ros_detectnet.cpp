@@ -65,8 +65,20 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
                                    const sensor_msgs::CameraInfoConstPtr& camera_info)
 {
   // camera matrix
-  Eigen::Matrix<double, 3, 3, Eigen::RowMajor> K(camera_info->K.data());
-  Eigen::Matrix<double, 3, 3, Eigen::RowMajor> K_inv = K.inverse();
+  Eigen::Matrix<float, 3, 3> K;
+  K(0, 0) = camera_info->K[0];
+  K(0, 1) = camera_info->K[1];
+  K(0, 2) = camera_info->K[2];
+  K(1, 0) = camera_info->K[3];
+  K(1, 1) = camera_info->K[4];
+  K(1, 2) = camera_info->K[5];
+  K(2, 0) = camera_info->K[6];
+  K(2, 1) = camera_info->K[7];
+  K(2, 2) = camera_info->K[8];
+
+  std::cout << "K = " << K << std::endl;
+  Eigen::Matrix<float, 3, 3, Eigen::RowMajor> K_inv = K.inverse();
+  std::cout << "Kinv = " << K_inv << std::endl;
 
   cv::Mat cv_im = cv_bridge::toCvCopy(input, "bgr8")->image;
   cv::Mat cv_result;
@@ -143,7 +155,7 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
         // calculate ground center of bounding box
         Eigen::Vector3f P1_img;
         P1_img(0) = bb[0] + (bb[2] - bb[0]) / 2;
-        P1_img(1) = bb[1];
+        P1_img(1) = bb[3];
         P1_img(2) = 1;
         center_points.emplace_back(P1_img);
 
@@ -177,40 +189,57 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
 
   tuw_object_msgs::ObjectDetection detected_persons_tuw;
   detected_persons_tuw.header = input->header;
+  detected_persons_tuw.type = tuw_object_msgs::ObjectDetection::OBJECT_TYPE_PERSON;
+  detected_persons_tuw.view_direction.w = 1;
+  detected_persons_tuw.view_direction.x = 0;
+  detected_persons_tuw.view_direction.y = 0;
+  detected_persons_tuw.view_direction.z = 0;
+  detected_persons_tuw.sensor_type = tuw_object_msgs::ObjectDetection::SENSOR_TYPE_GENERIC_MONOCULAR_VISION;
 
   for (size_t i = 0; i < center_points.size(); i++)
   {
     cv::circle(cv_result, cv::Point(center_points[i](0), center_points[i](1)), 2, cv::Scalar(0, 0, 255), -1, 8, 0);
 
     // calculate 3D position through intersection with ground plane
-    P1 = center_points[i];
+    P1 = K_inv * center_points[i];
+    std::cout << "center_points[i] = " << center_points[i] << std::endl;
+    std::cout << "P1 = " << P1 << std::endl;
+
     P_diff = P1 - P0;
+    std::cout << "P_diff = " << P_diff << std::endl;
+    std::cout << "gpd_ = " << gpd_ << std::endl;
+    std::cout << "gpn_.dot(P0) = " << gpn_.dot(P0) << std::endl;
     float nom = gpd_ - gpn_.dot(P0);
+    std::cout << "nom = " << nom << std::endl;
     float denom = gpn_.dot(P_diff);
-    P3D = P0 + nom / denom * P_diff;
+    std::cout << "denom = " << denom << std::endl;
+    if(denom != 0)
+    {
+        P3D = P0 + nom / denom * P_diff;
 
-    tuw_object_msgs::ObjectWithCovariance obj;
-    obj.covariance_pose.emplace_back(0.5);
-    obj.covariance_pose.emplace_back(0);
-    obj.covariance_pose.emplace_back(0);
-    obj.covariance_pose.emplace_back(0);
-    obj.covariance_pose.emplace_back(0.5);
-    obj.covariance_pose.emplace_back(0);
-    obj.covariance_pose.emplace_back(0);
-    obj.covariance_pose.emplace_back(0);
-    obj.covariance_pose.emplace_back(0);
+        tuw_object_msgs::ObjectWithCovariance obj;
+        obj.covariance_pose.emplace_back(0.5);
+        obj.covariance_pose.emplace_back(0);
+        obj.covariance_pose.emplace_back(0);
+        obj.covariance_pose.emplace_back(0);
+        obj.covariance_pose.emplace_back(0.5);
+        obj.covariance_pose.emplace_back(0);
+        obj.covariance_pose.emplace_back(0);
+        obj.covariance_pose.emplace_back(0);
+        obj.covariance_pose.emplace_back(0);
 
-    obj.object.ids.emplace_back(i);
-    obj.object.ids_confidence.emplace_back(1.0);
-    obj.object.pose.position.x = -P3D(0);
-    obj.object.pose.position.y = -P3D(1);
-    obj.object.pose.position.z = -P3D(2);
-    obj.object.pose.orientation.x = 0.0;
-    obj.object.pose.orientation.y = 0.0;
-    obj.object.pose.orientation.z = 0.0;
-    obj.object.pose.orientation.w = 1.0;
+        obj.object.ids.emplace_back(i);
+        obj.object.ids_confidence.emplace_back(1.0);
+        obj.object.pose.position.x = P3D(0);
+        obj.object.pose.position.y = P3D(1);
+        obj.object.pose.position.z = P3D(2);
+        obj.object.pose.orientation.x = 0.0;
+        obj.object.pose.orientation.y = 0.0;
+        obj.object.pose.orientation.z = 0.0;
+        obj.object.pose.orientation.w = 1.0;
 
-    detected_persons_tuw.objects.emplace_back(obj);
+        detected_persons_tuw.objects.emplace_back(obj);
+    }
   }
 
   personpub_.publish(detected_persons_tuw);
@@ -227,7 +256,7 @@ void ros_detectnet::groundPlaneCallback(const rwth_perception_people_msgs::Groun
   gpn_(2) = gp_->n[2];
 
   // ground plane distance ax+by+cz = d
-  double gpd_ = ((double)gp_->d) * (-1000.0);
+  gpd_ = ((float)gp_->d) * (-1.0);
 }
 
 }  // namespace ros_deep_learning

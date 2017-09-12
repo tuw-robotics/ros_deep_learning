@@ -57,7 +57,7 @@ class ros_detectnet : public nodelet::Nodelet
         
         rwth_perception_people_msgs::GroundPlane::ConstPtr gp_;
         Eigen::Vector3f gpn_;
-        double gpd_;
+        float gpd_;
 };
 
 PLUGINLIB_DECLARE_CLASS(ros_deep_learning, ros_detectnet, ros_deep_learning::ros_detectnet, nodelet::Nodelet);
