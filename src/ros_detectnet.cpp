@@ -216,6 +216,7 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
     if(denom != 0)
     {
         P3D = P0 + nom / denom * P_diff;
+        std::cout << "P3D = " << P3D << std::endl;
 
         tuw_object_msgs::ObjectWithCovariance obj;
         obj.covariance_pose.emplace_back(0.5);
@@ -226,7 +227,7 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
         obj.covariance_pose.emplace_back(0);
         obj.covariance_pose.emplace_back(0);
         obj.covariance_pose.emplace_back(0);
-        obj.covariance_pose.emplace_back(0);
+        obj.covariance_pose.emplace_back(0.5);
 
         obj.object.ids.emplace_back(i);
         obj.object.ids_confidence.emplace_back(1.0);
