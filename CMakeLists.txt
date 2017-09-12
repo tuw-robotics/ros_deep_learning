@@ -9,7 +9,6 @@ find_package(catkin REQUIRED COMPONENTS
   std_msgs
   tuw_object_msgs
   rwth_perception_people_msgs
-  
 )
 find_package(jetson-inference REQUIRED)
 find_package(CUDA REQUIRED)

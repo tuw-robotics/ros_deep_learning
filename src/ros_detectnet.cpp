@@ -13,8 +13,8 @@ void ros_detectnet::onInit()
 {
   // get a private nodehandle
   ros::NodeHandle& private_nh = getPrivateNodeHandle();
+  
   // get parameters from server, checking for errors as it goes
-
   std::string prototxt_path, model_path, mean_binary_path, class_labels_path;
   if (!private_nh.getParam("prototxt_path", prototxt_path))
     ROS_ERROR("unable to read prototxt_path for detectnet node");
@@ -27,11 +27,6 @@ void ros_detectnet::onInit()
   if (access(model_path.c_str(), R_OK))
     ROS_ERROR("unable to read file \"%s\", check filename and permissions", model_path.c_str());
 
-  // create imageNet
-  // net = imageNet::Create(prototxt_path.c_str(),model_path.c_str(),NULL,class_labels_path.c_str());
-
-  // create detectNet
-  // net = detectNet::Create(detectNet::PEDNET, 0.5f, 2);
   net_ = detectNet::Create(prototxt_path.c_str(), model_path.c_str(), 0.0f, 0.5f, DETECTNET_DEFAULT_INPUT,
                            DETECTNET_DEFAULT_COVERAGE, DETECTNET_DEFAULT_BBOX, 2);
 
@@ -43,19 +38,13 @@ void ros_detectnet::onInit()
   
   gpsub_ = private_nh.subscribe("ground_plane", 100, &ros_detectnet::groundPlaneCallback, this);
 
-  // setup image transport
   image_transport::ImageTransport it(private_nh);
-  // subscriber for passing in images
+
   camsub_ = it.subscribeCamera("imin", 10, &ros_detectnet::cameraCallback, this);
 
   impub_ = it.advertise("image_out", 1);
 
   personpub_ = private_nh.advertise<tuw_object_msgs::ObjectDetection>("detected_persons_tuw", 1);
-
-  // publisher for classifier output
-  // class_pub = private_nh.advertise<std_msgs::Int32>("class",10);
-  // publisher for human-readable classifier output
-  // class_str_pub = private_nh.advertise<std_msgs::String>("class_str",10);
 
   // init gpu memory
   gpu_data_ = NULL;
@@ -76,9 +65,7 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
   K(2, 1) = camera_info->K[7];
   K(2, 2) = camera_info->K[8];
 
-  std::cout << "K = " << K << std::endl;
   Eigen::Matrix<float, 3, 3, Eigen::RowMajor> K_inv = K.inverse();
-  std::cout << "Kinv = " << K_inv << std::endl;
 
   cv::Mat cv_im = cv_bridge::toCvCopy(input, "bgr8")->image;
   cv::Mat cv_result;
@@ -159,9 +146,6 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
         P1_img(2) = 1;
         center_points.emplace_back(P1_img);
 
-        // CUDA(cudaNormalizeRGBA((float4*)gpu_data_, make_float2(0.0f, 255.0f), (float4*)gpu_data_, make_float2(0.0f,
-        // 1.0f), imgWidth_, imgHeight_));
-
         // copy back to host
         CUDA(cudaMemcpy(cpu_data, gpu_data_, imgSize_, cudaMemcpyDeviceToHost));
 
@@ -202,21 +186,13 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
 
     // calculate 3D position through intersection with ground plane
     P1 = K_inv * center_points[i];
-    std::cout << "center_points[i] = " << center_points[i] << std::endl;
-    std::cout << "P1 = " << P1 << std::endl;
-
     P_diff = P1 - P0;
-    std::cout << "P_diff = " << P_diff << std::endl;
-    std::cout << "gpd_ = " << gpd_ << std::endl;
-    std::cout << "gpn_.dot(P0) = " << gpn_.dot(P0) << std::endl;
     float nom = gpd_ - gpn_.dot(P0);
-    std::cout << "nom = " << nom << std::endl;
     float denom = gpn_.dot(P_diff);
-    std::cout << "denom = " << denom << std::endl;
+    
     if(denom != 0)
     {
         P3D = P0 + nom / denom * P_diff;
-        std::cout << "P3D = " << P3D << std::endl;
 
         tuw_object_msgs::ObjectWithCovariance obj;
         obj.covariance_pose.emplace_back(0.5);
@@ -256,7 +232,7 @@ void ros_detectnet::groundPlaneCallback(const rwth_perception_people_msgs::Groun
   gpn_(1) = gp_->n[1];
   gpn_(2) = gp_->n[2];
 
-  // ground plane distance ax+by+cz = d
+  // ground plane distance
   gpd_ = ((float)gp_->d) * (-1.0);
 }
 
