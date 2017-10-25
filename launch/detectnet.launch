@@ -1,6 +1,6 @@
 <launch>
     <arg name="image" default="/image_raw"/>
-    <arg name="ground_plane" default="ground_plane"/>
+    <arg name="ground_plane" default="camera_color/ground_plane"/>
 
     <!-- set parameters -->
     <rosparam  file="$(find ros_deep_learning)/config/paths_detectnet.yaml" command="load"/>
