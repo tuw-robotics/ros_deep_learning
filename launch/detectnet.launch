@@ -1,6 +1,8 @@
+<?xml version="1.0"?>
+
 <launch>
-    <arg name="image" default="/image_raw"/>
-    <arg name="ground_plane" default="camera_color/ground_plane"/>
+    <arg name="image" default="/p3dx/camera/color/image_raw"/>
+    <arg name="ground_plane" default="/p3dx/camera/ground_plane"/>
 
     <!-- set parameters -->
     <rosparam  file="$(find ros_deep_learning)/config/paths_detectnet.yaml" command="load"/>

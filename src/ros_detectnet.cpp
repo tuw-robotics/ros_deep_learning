@@ -163,8 +163,14 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
 
   Eigen::Vector3f P0(0, 0, 0);
   Eigen::Vector3f P1;
+  Eigen::Vector3f P1_ground;
   Eigen::Vector3f P_diff;
   Eigen::Vector3f P3D;
+  
+  Eigen::Vector2f eigenvector1;
+  Eigen::Vector2f eigenvector2;  
+  double eigenvalue1 = 50.0;
+  double eigenvalue2 = 0.05;
 
   cv_result = cv::Mat(imgHeight_, imgWidth_, CV_32FC4, cpu_data);
   cv_result.convertTo(cv_result, CV_8UC4);
@@ -193,17 +199,61 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
     if(denom != 0)
     {
         P3D = P0 + nom / denom * P_diff;
+        
+        // move point P1 onto the ground plane s.t. 
+        // P1_ground, P3D define a line segement on the GP in direction towards the detection
+        P1_ground = P1;
+        P1_ground(1) = P3D(1); // y is coordinate to ground
+        
+        eigenvector1(0) = (P3D - P1_ground).normalized()(0);
+        eigenvector1(1) = (P3D - P1_ground).normalized()(2);
+        // second eigenvector is orthogonal to first
+        // i.e. eigenvector1 . eigenvector2 = 0
+        eigenvector2(0) = - eigenvector1(1);
+        eigenvector2(1) = eigenvector1(0);
+
+	//std::cout << "v1 = " << eigenvector1 << ", v2 = " << eigenvector2 << std::endl;
+        
+        // construct covariance from eigenvectors
+        
+        Eigen::Matrix2d P;
+        Eigen::Matrix<double, 2, 2, Eigen::RowMajor> Q;
+        Eigen::Matrix<double, 2, 2> diag;
+        diag << eigenvalue1, 0, 0, eigenvalue2;
+        
+        P.leftCols(1) = eigenvector1.cast<double>();
+        P.rightCols(1) = eigenvector2.cast<double>();
+
+//std::cout << "P = " << std::endl << P << std::endl;
+//std::cout << "diag = " << std::endl << diag << std::endl;
+        
+        Q = P * diag * P.inverse();
 
         tuw_object_msgs::ObjectWithCovariance obj;
-        obj.covariance_pose.emplace_back(0.5);
+        
+        // points defining the direction towards the detection
+        obj.object.shape_variables.emplace_back(P1_ground(0));
+        obj.object.shape_variables.emplace_back(P1_ground(1));
+        obj.object.shape_variables.emplace_back(P1_ground(2));
+        
+        obj.object.shape_variables.emplace_back(P3D(0));
+        obj.object.shape_variables.emplace_back(P3D(1));
+        obj.object.shape_variables.emplace_back(P3D(2));
+        
+        obj.covariance_pose.emplace_back(Q(0, 0));
+        obj.covariance_pose.emplace_back(0);
+        obj.covariance_pose.emplace_back(Q(1, 0));
+
         obj.covariance_pose.emplace_back(0);
         obj.covariance_pose.emplace_back(0);
         obj.covariance_pose.emplace_back(0);
-        obj.covariance_pose.emplace_back(0.5);
+
+        obj.covariance_pose.emplace_back(Q(0, 1));
         obj.covariance_pose.emplace_back(0);
-        obj.covariance_pose.emplace_back(0);
-        obj.covariance_pose.emplace_back(0);
-        obj.covariance_pose.emplace_back(0.5);
+        obj.covariance_pose.emplace_back(Q(1, 1));
+        
+
+//std::cout << "covariance_pose = " << std::endl << Q << std::endl;
 
         obj.object.ids.emplace_back(i);
         obj.object.ids_confidence.emplace_back(1.0);
