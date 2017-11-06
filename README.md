@@ -10,3 +10,10 @@ mkdir build
 cd build
 cmake ../
 make
+sudo make install
+```
+For use on other platforms than jetson, adjust GPU architecture in CMakeLists.txt:
+```
+-gencode arch=compute_53,code=sm_53
+```
+For reference see: https://github.com/dusty-nv/jetson-inference/issues/35
