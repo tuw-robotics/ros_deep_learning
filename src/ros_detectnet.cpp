@@ -13,7 +13,7 @@ void ros_detectnet::onInit()
 {
   // get a private nodehandle
   ros::NodeHandle& private_nh = getPrivateNodeHandle();
-  
+
   // get parameters from server, checking for errors as it goes
   std::string prototxt_path, model_path, mean_binary_path, class_labels_path;
   if (!private_nh.getParam("prototxt_path", prototxt_path))
@@ -35,7 +35,7 @@ void ros_detectnet::onInit()
     ROS_INFO("ros_detectnet: failed to initialize detectNet\n");
     return;
   }
-  
+
   gpsub_ = private_nh.subscribe("ground_plane", 100, &ros_detectnet::groundPlaneCallback, this);
 
   image_transport::ImageTransport it(private_nh);
@@ -122,7 +122,6 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
 
   if (det_result)
   {
-    int lastClass = 0;
     int lastStart = 0;
 
     for (int n = 0; n < numBoundingBoxes; n++)
@@ -133,27 +132,23 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
       ROS_INFO("ros_detectnet: bounding box %i   (%f, %f)  (%f, %f)  w=%f  h=%f\n", n, bb[0], bb[1], bb[2], bb[3],
                bb[2] - bb[0], bb[3] - bb[1]);
 
-      if (nc != lastClass || n == (numBoundingBoxes - 1))
-      {
-        if (!net_->DrawBoxes((float*)gpu_data_, (float*)gpu_data_, imgWidth_, imgHeight_, bbCUDA + (lastStart * 4),
-                             (n - lastStart) + 1, lastClass))
-          ROS_ERROR("ros_detectnet: failed to draw boxes\n");
+      if (!net_->DrawBoxes((float*)gpu_data_, (float*)gpu_data_, imgWidth_, imgHeight_, bbCUDA + (lastStart * 4),
+                           (n - lastStart) + 1, 0))
+        ROS_ERROR("ros_detectnet: failed to draw boxes\n");
 
-        // calculate ground center of bounding box
-        Eigen::Vector3f P1_img;
-        P1_img(0) = bb[0] + (bb[2] - bb[0]) / 2;
-        P1_img(1) = bb[3];
-        P1_img(2) = 1;
-        center_points.emplace_back(P1_img);
+      // calculate ground center of bounding box
+      Eigen::Vector3f P1_img;
+      P1_img(0) = bb[0] + (bb[2] - bb[0]) / 2;
+      P1_img(1) = bb[3];
+      P1_img(2) = 1;
+      center_points.emplace_back(P1_img);
 
-        // copy back to host
-        CUDA(cudaMemcpy(cpu_data, gpu_data_, imgSize_, cudaMemcpyDeviceToHost));
+      // copy back to host
+      CUDA(cudaMemcpy(cpu_data, gpu_data_, imgSize_, cudaMemcpyDeviceToHost));
 
-        lastClass = nc;
-        lastStart = n;
+      lastStart = n;
 
-        CUDA(cudaDeviceSynchronize());
-      }
+      CUDA(cudaDeviceSynchronize());
     }
   }
   else
@@ -166,9 +161,9 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
   Eigen::Vector3f P1_ground;
   Eigen::Vector3f P_diff;
   Eigen::Vector3f P3D;
-  
+
   Eigen::Vector2f eigenvector1;
-  Eigen::Vector2f eigenvector2;  
+  Eigen::Vector2f eigenvector2;
   double eigenvalue1 = 50.0;
   double eigenvalue2 = 0.05;
 
@@ -185,7 +180,7 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
   detected_persons_tuw.view_direction.y = 0;
   detected_persons_tuw.view_direction.z = 0;
   detected_persons_tuw.sensor_type = tuw_object_msgs::ObjectDetection::SENSOR_TYPE_GENERIC_MONOCULAR_VISION;
-
+  
   for (size_t i = 0; i < center_points.size(); i++)
   {
     cv::circle(cv_result, cv::Point(center_points[i](0), center_points[i](1)), 2, cv::Scalar(0, 0, 255), -1, 8, 0);
@@ -195,77 +190,70 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
     P_diff = P1 - P0;
     float nom = gpd_ - gpn_.dot(P0);
     float denom = gpn_.dot(P_diff);
-    
-    if(denom != 0)
+
+    if (denom != 0)
     {
-        P3D = P0 + nom / denom * P_diff;
-        
-        // move point P1 onto the ground plane s.t. 
-        // P1_ground, P3D define a line segement on the GP in direction towards the detection
-        P1_ground = P1;
-        P1_ground(1) = P3D(1); // y is coordinate to ground
-        
-        eigenvector1(0) = (P3D - P1_ground).normalized()(0);
-        eigenvector1(1) = (P3D - P1_ground).normalized()(2);
-        // second eigenvector is orthogonal to first
-        // i.e. eigenvector1 . eigenvector2 = 0
-        eigenvector2(0) = - eigenvector1(1);
-        eigenvector2(1) = eigenvector1(0);
+      std::cout << "denom != 0" << std::endl;
+      P3D = P0 + nom / denom * P_diff;
 
-	//std::cout << "v1 = " << eigenvector1 << ", v2 = " << eigenvector2 << std::endl;
-        
-        // construct covariance from eigenvectors
-        
-        Eigen::Matrix2d P;
-        Eigen::Matrix<double, 2, 2, Eigen::RowMajor> Q;
-        Eigen::Matrix<double, 2, 2> diag;
-        diag << eigenvalue1, 0, 0, eigenvalue2;
-        
-        P.leftCols(1) = eigenvector1.cast<double>();
-        P.rightCols(1) = eigenvector2.cast<double>();
+      // move point P1 onto the ground plane s.t.
+      // P1_ground, P3D define a line segement on the GP in direction towards the detection
+      P1_ground = P1;
+      P1_ground(1) = P3D(1);  // y is coordinate to ground
 
-//std::cout << "P = " << std::endl << P << std::endl;
-//std::cout << "diag = " << std::endl << diag << std::endl;
-        
-        Q = P * diag * P.inverse();
+      eigenvector1(0) = (P3D - P1_ground).normalized()(0);
+      eigenvector1(1) = (P3D - P1_ground).normalized()(2);
+      // second eigenvector is orthogonal to first
+      // i.e. eigenvector1 . eigenvector2 = 0
+      eigenvector2(0) = -eigenvector1(1);
+      eigenvector2(1) = eigenvector1(0);
 
-        tuw_object_msgs::ObjectWithCovariance obj;
-        
-        // points defining the direction towards the detection
-        obj.object.shape_variables.emplace_back(P1_ground(0));
-        obj.object.shape_variables.emplace_back(P1_ground(1));
-        obj.object.shape_variables.emplace_back(P1_ground(2));
-        
-        obj.object.shape_variables.emplace_back(P3D(0));
-        obj.object.shape_variables.emplace_back(P3D(1));
-        obj.object.shape_variables.emplace_back(P3D(2));
-        
-        obj.covariance_pose.emplace_back(Q(0, 0));
-        obj.covariance_pose.emplace_back(0);
-        obj.covariance_pose.emplace_back(Q(1, 0));
+      // construct covariance from eigenvectors
 
-        obj.covariance_pose.emplace_back(0);
-        obj.covariance_pose.emplace_back(0);
-        obj.covariance_pose.emplace_back(0);
+      Eigen::Matrix2d P;
+      Eigen::Matrix<double, 2, 2, Eigen::RowMajor> Q;
+      Eigen::Matrix<double, 2, 2> diag;
+      diag << eigenvalue1, 0, 0, eigenvalue2;
 
-        obj.covariance_pose.emplace_back(Q(0, 1));
-        obj.covariance_pose.emplace_back(0);
-        obj.covariance_pose.emplace_back(Q(1, 1));
-        
+      P.leftCols(1) = eigenvector1.cast<double>();
+      P.rightCols(1) = eigenvector2.cast<double>();
 
-//std::cout << "covariance_pose = " << std::endl << Q << std::endl;
+      Q = P * diag * P.inverse();
 
-        obj.object.ids.emplace_back(i);
-        obj.object.ids_confidence.emplace_back(1.0);
-        obj.object.pose.position.x = P3D(0);
-        obj.object.pose.position.y = P3D(1);
-        obj.object.pose.position.z = P3D(2);
-        obj.object.pose.orientation.x = 0.0;
-        obj.object.pose.orientation.y = 0.0;
-        obj.object.pose.orientation.z = 0.0;
-        obj.object.pose.orientation.w = 1.0;
+      tuw_object_msgs::ObjectWithCovariance obj;
 
-        detected_persons_tuw.objects.emplace_back(obj);
+      // points defining the direction towards the detection
+      obj.object.shape_variables.emplace_back(P1_ground(0));
+      obj.object.shape_variables.emplace_back(P1_ground(1));
+      obj.object.shape_variables.emplace_back(P1_ground(2));
+
+      obj.object.shape_variables.emplace_back(P3D(0));
+      obj.object.shape_variables.emplace_back(P3D(1));
+      obj.object.shape_variables.emplace_back(P3D(2));
+
+      obj.covariance_pose.emplace_back(Q(0, 0));
+      obj.covariance_pose.emplace_back(0);
+      obj.covariance_pose.emplace_back(Q(1, 0));
+
+      obj.covariance_pose.emplace_back(0);
+      obj.covariance_pose.emplace_back(0);
+      obj.covariance_pose.emplace_back(0);
+
+      obj.covariance_pose.emplace_back(Q(0, 1));
+      obj.covariance_pose.emplace_back(0);
+      obj.covariance_pose.emplace_back(Q(1, 1));
+
+      obj.object.ids.emplace_back(i);
+      obj.object.ids_confidence.emplace_back(1.0);
+      obj.object.pose.position.x = P3D(0);
+      obj.object.pose.position.y = P3D(1);
+      obj.object.pose.position.z = P3D(2);
+      obj.object.pose.orientation.x = 0.0;
+      obj.object.pose.orientation.y = 0.0;
+      obj.object.pose.orientation.z = 0.0;
+      obj.object.pose.orientation.w = 1.0;
+
+      detected_persons_tuw.objects.emplace_back(obj);
     }
   }
 
