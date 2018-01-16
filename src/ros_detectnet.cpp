@@ -148,14 +148,18 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& color_image
                            (n - lastStart) + 1, 0))
         ROS_ERROR("ros_detectnet: failed to draw boxes\n");
 
-      // calculate ground center of bounding box
-      Eigen::Vector3f P1_img;
-      P1_img(0) = bb[0] + (bb[2] - bb[0]) / 2;
-      P1_img(1) = bb[3];
-      P1_img(2) = 1;
-      center_points.emplace_back(P1_img);
-      
-      bounding_box_points.emplace_back(Eigen::Vector4f(bb[0], bb[1], bb[2], bb[3]));
+      // image coords have to be positive
+      if(bb[0] > 0 && bb[1] > 0 && bb[2] > 0 && bb[3] > 0)
+      {
+        // calculate ground center of bounding box
+        Eigen::Vector3f P1_img;
+        P1_img(0) = bb[0] + (bb[2] - bb[0]) / 2;
+        P1_img(1) = bb[3];
+        P1_img(2) = 1;
+        center_points.emplace_back(P1_img);
+        
+        bounding_box_points.emplace_back(Eigen::Vector4f(bb[0], bb[1], bb[2], bb[3]));
+      }
 
       // copy back to host
       CUDA(cudaMemcpy(cpu_data, gpu_data_, imgSize_, cudaMemcpyDeviceToHost));
