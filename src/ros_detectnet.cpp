@@ -13,6 +13,7 @@ void ros_detectnet::onInit()
 {
   // get a private nodehandle
   ros::NodeHandle& private_nh = getPrivateNodeHandle();
+  ros::NodeHandle& nh = getNodeHandle();
 
   // get parameters from server, checking for errors as it goes
   std::string prototxt_path, model_path, mean_binary_path, class_labels_path;
@@ -36,11 +37,20 @@ void ros_detectnet::onInit()
     return;
   }
 
-  gpsub_ = private_nh.subscribe("ground_plane", 100, &ros_detectnet::groundPlaneCallback, this);
-
   image_transport::ImageTransport it(private_nh);
+  
+  sub_color_camera_info_ = std::shared_ptr<message_filters::Subscriber<sensor_msgs::CameraInfo>>(new message_filters::Subscriber<sensor_msgs::CameraInfo>(nh, "camera_info_color", 1));
+  
+  // Subscribe to color, point cloud and depth using synchronization filter
+  ROS_INFO("subscribe to image topics");
+  sub_depth_ = std::shared_ptr<message_filters::Subscriber<sensor_msgs::Image>>
+                     (new message_filters::Subscriber<sensor_msgs::Image>(nh, "image_color", 1));
+  sub_color_ = std::shared_ptr<message_filters::Subscriber<sensor_msgs::Image>>
+                     (new message_filters::Subscriber<sensor_msgs::Image>(nh, "image_depth", 1));
 
-  camsub_ = it.subscribeCamera("imin", 10, &ros_detectnet::cameraCallback, this);
+  sync_image_ = std::shared_ptr<message_filters::Synchronizer<syncPolicyImage>>
+                      (new message_filters::Synchronizer<syncPolicyImage>(syncPolicyImage(40), *sub_depth_, *sub_color_, *sub_color_camera_info_));
+  sync_image_->registerCallback(boost::bind(&ros_detectnet::cameraCallback, this, _1, _2, _3));
 
   impub_ = it.advertise("image_out", 1);
 
@@ -50,25 +60,26 @@ void ros_detectnet::onInit()
   gpu_data_ = NULL;
 }
 
-void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
-                                   const sensor_msgs::CameraInfoConstPtr& camera_info)
+void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& color_image, const sensor_msgs::ImageConstPtr& depth_image, const sensor_msgs::CameraInfoConstPtr& color_camera_info)
 {
-  // camera matrix
+  // color camera matrix
   Eigen::Matrix<float, 3, 3> K;
-  K(0, 0) = camera_info->K[0];
-  K(0, 1) = camera_info->K[1];
-  K(0, 2) = camera_info->K[2];
-  K(1, 0) = camera_info->K[3];
-  K(1, 1) = camera_info->K[4];
-  K(1, 2) = camera_info->K[5];
-  K(2, 0) = camera_info->K[6];
-  K(2, 1) = camera_info->K[7];
-  K(2, 2) = camera_info->K[8];
-
+  K(0, 0) = color_camera_info->K[0];
+  K(0, 1) = color_camera_info->K[1];
+  K(0, 2) = color_camera_info->K[2];
+  K(1, 0) = color_camera_info->K[3];
+  K(1, 1) = color_camera_info->K[4];
+  K(1, 2) = color_camera_info->K[5];
+  K(2, 0) = color_camera_info->K[6];
+  K(2, 1) = color_camera_info->K[7];
+  K(2, 2) = color_camera_info->K[8];
+  
   Eigen::Matrix<float, 3, 3, Eigen::RowMajor> K_inv = K.inverse();
 
-  cv::Mat cv_im = cv_bridge::toCvCopy(input, "bgr8")->image;
+  cv::Mat cv_im = cv_bridge::toCvCopy(color_image, "bgr8")->image;
   cv::Mat cv_result;
+  
+  cv::Mat cv_im_depth = cv_bridge::toCvCopy(depth_image, depth_image->encoding)->image;
 
   ROS_DEBUG("ros_detectnet: image ptr at %p", cv_im.data);
   // convert bit depth
@@ -114,6 +125,7 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
   float4* cpu_data = (float4*)(cv_im.data);
 
   std::vector<Eigen::Vector3f> center_points;
+  std::vector<Eigen::Vector4f> bounding_box_points;
 
   // copy to device
   CUDA(cudaMemcpy(gpu_data_, cpu_data, imgSize_, cudaMemcpyHostToDevice));
@@ -142,6 +154,8 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
       P1_img(1) = bb[3];
       P1_img(2) = 1;
       center_points.emplace_back(P1_img);
+      
+      bounding_box_points.emplace_back(Eigen::Vector4f(bb[0], bb[1], bb[2], bb[3]));
 
       // copy back to host
       CUDA(cudaMemcpy(cpu_data, gpu_data_, imgSize_, cudaMemcpyDeviceToHost));
@@ -155,17 +169,8 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
   {
     ROS_ERROR("detectnet: detection error occured");
   }
-
-  Eigen::Vector3f P0(0, 0, 0);
-  Eigen::Vector3f P1;
-  Eigen::Vector3f P1_ground;
-  Eigen::Vector3f P_diff;
+  
   Eigen::Vector3f P3D;
-
-  Eigen::Vector2f eigenvector1;
-  Eigen::Vector2f eigenvector2;
-  double eigenvalue1 = 50.0;
-  double eigenvalue2 = 0.05;
 
   cv_result = cv::Mat(imgHeight_, imgWidth_, CV_32FC4, cpu_data);
   cv_result.convertTo(cv_result, CV_8UC4);
@@ -173,105 +178,65 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
   cv::cvtColor(cv_result, cv_result, CV_RGBA2BGR);
 
   tuw_object_msgs::ObjectDetection detected_persons_tuw;
-  detected_persons_tuw.header = input->header;
+  detected_persons_tuw.header = color_image->header;
   detected_persons_tuw.type = tuw_object_msgs::ObjectDetection::OBJECT_TYPE_PERSON;
   detected_persons_tuw.view_direction.w = 1;
   detected_persons_tuw.view_direction.x = 0;
   detected_persons_tuw.view_direction.y = 0;
   detected_persons_tuw.view_direction.z = 0;
-  detected_persons_tuw.sensor_type = tuw_object_msgs::ObjectDetection::SENSOR_TYPE_GENERIC_MONOCULAR_VISION;
+  detected_persons_tuw.sensor_type = tuw_object_msgs::ObjectDetection::SENSOR_TYPE_GENERIC_RGBD;
   
   for (size_t i = 0; i < center_points.size(); i++)
   {
     cv::circle(cv_result, cv::Point(center_points[i](0), center_points[i](1)), 2, cv::Scalar(0, 0, 255), -1, 8, 0);
 
-    // calculate 3D position through intersection with ground plane
-    P1 = K_inv * center_points[i];
-    P_diff = P1 - P0;
-    float nom = gpd_ - gpn_.dot(P0);
-    float denom = gpn_.dot(P_diff);
+    // get 3D position from depth image bb[2] - bb[0], bb[3] - bb[1]
+    cv::Mat bounding_box = cv_im_depth( cv::Rect(bounding_box_points[i](0), bounding_box_points[i](1), bounding_box_points[i](2) - bounding_box_points[i](0), bounding_box_points[i](3) - bounding_box_points[i](1))).clone();
+    
+    bounding_box = bounding_box.reshape(0, 1);
+    
+    std::vector<float> bounding_box_vec;
+    bounding_box.copyTo(bounding_box_vec);
+    
+    std::nth_element(bounding_box_vec.begin(), bounding_box_vec.begin() + bounding_box_vec.size() / 2, bounding_box_vec.end());
+    
+    double depth = double(bounding_box_vec[bounding_box_vec.size() / 2]);
+    if(std::isnan(depth))
+      depth = 0.0;
+    
+    // cv::rectangle(cv_result, cv::Rect(bounding_box_points[i](0), bounding_box_points[i](1), bounding_box_points[i](2) - bounding_box_points[i](0), bounding_box_points[i](3) - bounding_box_points[i](1)), cv::Scalar(0, 0, 255), -1, 8, 0);
+    
+    P3D = K_inv * center_points[i];
 
-    if (denom != 0)
-    {
-      std::cout << "denom != 0" << std::endl;
-      P3D = P0 + nom / denom * P_diff;
+    tuw_object_msgs::ObjectWithCovariance obj;
 
-      // move point P1 onto the ground plane s.t.
-      // P1_ground, P3D define a line segement on the GP in direction towards the detection
-      P1_ground = P1;
-      P1_ground(1) = P3D(1);  // y is coordinate to ground
+    obj.covariance_pose.emplace_back(0.2);
+    obj.covariance_pose.emplace_back(0);
+    obj.covariance_pose.emplace_back(0);
 
-      eigenvector1(0) = (P3D - P1_ground).normalized()(0);
-      eigenvector1(1) = (P3D - P1_ground).normalized()(2);
-      // second eigenvector is orthogonal to first
-      // i.e. eigenvector1 . eigenvector2 = 0
-      eigenvector2(0) = -eigenvector1(1);
-      eigenvector2(1) = eigenvector1(0);
+    obj.covariance_pose.emplace_back(0);
+    obj.covariance_pose.emplace_back(0.2);
+    obj.covariance_pose.emplace_back(0);
 
-      // construct covariance from eigenvectors
+    obj.covariance_pose.emplace_back(0);
+    obj.covariance_pose.emplace_back(0);
+    obj.covariance_pose.emplace_back(0.2);
 
-      Eigen::Matrix2d P;
-      Eigen::Matrix<double, 2, 2, Eigen::RowMajor> Q;
-      Eigen::Matrix<double, 2, 2> diag;
-      diag << eigenvalue1, 0, 0, eigenvalue2;
+    obj.object.ids.emplace_back(i);
+    obj.object.ids_confidence.emplace_back(1.0);
+    obj.object.pose.position.x = P3D(0);
+    obj.object.pose.position.y = P3D(1);
+    obj.object.pose.position.z = depth;
+    obj.object.pose.orientation.x = 0.0;
+    obj.object.pose.orientation.y = 0.0;
+    obj.object.pose.orientation.z = 0.0;
+    obj.object.pose.orientation.w = 1.0;
 
-      P.leftCols(1) = eigenvector1.cast<double>();
-      P.rightCols(1) = eigenvector2.cast<double>();
-
-      Q = P * diag * P.inverse();
-
-      tuw_object_msgs::ObjectWithCovariance obj;
-
-      // points defining the direction towards the detection
-      obj.object.shape_variables.emplace_back(P1_ground(0));
-      obj.object.shape_variables.emplace_back(P1_ground(1));
-      obj.object.shape_variables.emplace_back(P1_ground(2));
-
-      obj.object.shape_variables.emplace_back(P3D(0));
-      obj.object.shape_variables.emplace_back(P3D(1));
-      obj.object.shape_variables.emplace_back(P3D(2));
-
-      obj.covariance_pose.emplace_back(Q(0, 0));
-      obj.covariance_pose.emplace_back(0);
-      obj.covariance_pose.emplace_back(Q(1, 0));
-
-      obj.covariance_pose.emplace_back(0);
-      obj.covariance_pose.emplace_back(0);
-      obj.covariance_pose.emplace_back(0);
-
-      obj.covariance_pose.emplace_back(Q(0, 1));
-      obj.covariance_pose.emplace_back(0);
-      obj.covariance_pose.emplace_back(Q(1, 1));
-
-      obj.object.ids.emplace_back(i);
-      obj.object.ids_confidence.emplace_back(1.0);
-      obj.object.pose.position.x = P3D(0);
-      obj.object.pose.position.y = P3D(1);
-      obj.object.pose.position.z = P3D(2);
-      obj.object.pose.orientation.x = 0.0;
-      obj.object.pose.orientation.y = 0.0;
-      obj.object.pose.orientation.z = 0.0;
-      obj.object.pose.orientation.w = 1.0;
-
-      detected_persons_tuw.objects.emplace_back(obj);
-    }
+    detected_persons_tuw.objects.emplace_back(obj);
   }
 
   personpub_.publish(detected_persons_tuw);
   impub_.publish(cv_bridge::CvImage(std_msgs::Header(), "bgr8", cv_result).toImageMsg());
-}
-
-void ros_detectnet::groundPlaneCallback(const rwth_perception_people_msgs::GroundPlane::ConstPtr& gp)
-{
-  gp_ = gp;
-
-  // ground plane normal vector
-  gpn_(0) = gp_->n[0];
-  gpn_(1) = gp_->n[1];
-  gpn_(2) = gp_->n[2];
-
-  // ground plane distance
-  gpd_ = ((float)gp_->d) * (-1.0);
 }
 
 }  // namespace ros_deep_learning
