@@ -195,7 +195,23 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& color_image
     cv::circle(cv_result, cv::Point(center_points[i](0), center_points[i](1)), 2, cv::Scalar(0, 0, 255), -1, 8, 0);
 
     // get 3D position from depth image bb[2] - bb[0], bb[3] - bb[1]
-    cv::Mat bounding_box = cv_im_depth( cv::Rect(bounding_box_points[i](0), bounding_box_points[i](1), bounding_box_points[i](2) - bounding_box_points[i](0), bounding_box_points[i](3) - bounding_box_points[i](1))).clone();
+    
+    // check whether roi specified by cv::Rect is inside the depth image
+    // since depth fov might be smaller than rgb
+    
+    int rect_width = (int)(bounding_box_points[i](2) - bounding_box_points[i](0));
+    int rect_height = (int)(bounding_box_points[i](3) - bounding_box_points[i](1));
+    
+    int rect_upper_corner_x = (int)(bounding_box_points[i](0));
+    int rect_upper_corner_y = (int)(bounding_box_points[i](1));
+
+    cv::Rect rect = cv::Rect(rect_upper_corner_x, rect_upper_corner_y, rect_width, rect_height);
+
+    // check if bounding box is inside image
+    if((rect & cv::Rect(0, 0, cv_im_depth.cols, cv_im_depth.rows)) != rect)
+      continue;
+
+    cv::Mat bounding_box = cv_im_depth(cv::Rect(rect_upper_corner_x, rect_upper_corner_y, rect_width, rect_height)).clone();
     
     bounding_box = bounding_box.reshape(0, 1);
     
@@ -205,38 +221,42 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& color_image
     std::nth_element(bounding_box_vec.begin(), bounding_box_vec.begin() + bounding_box_vec.size() / 2, bounding_box_vec.end());
     
     double depth = double(bounding_box_vec[bounding_box_vec.size() / 2]);
-    if(std::isnan(depth))
-      depth = 0.0;
     
     // cv::rectangle(cv_result, cv::Rect(bounding_box_points[i](0), bounding_box_points[i](1), bounding_box_points[i](2) - bounding_box_points[i](0), bounding_box_points[i](3) - bounding_box_points[i](1)), cv::Scalar(0, 0, 255), -1, 8, 0);
     
     P3D = K_inv * center_points[i];
+    
+    // check for nans
+    if(!std::isnan(depth) && !std::isinf(depth) && !std::isnan(P3D(0)) && !std::isnan(P3D(1)))
+    {
+      tuw_object_msgs::ObjectWithCovariance obj;
 
-    tuw_object_msgs::ObjectWithCovariance obj;
+      obj.covariance_pose.emplace_back(0.2);
+      obj.covariance_pose.emplace_back(0);
+      obj.covariance_pose.emplace_back(0);
 
-    obj.covariance_pose.emplace_back(0.2);
-    obj.covariance_pose.emplace_back(0);
-    obj.covariance_pose.emplace_back(0);
+      obj.covariance_pose.emplace_back(0);
+      obj.covariance_pose.emplace_back(0.2);
+      obj.covariance_pose.emplace_back(0);
 
-    obj.covariance_pose.emplace_back(0);
-    obj.covariance_pose.emplace_back(0.2);
-    obj.covariance_pose.emplace_back(0);
+      obj.covariance_pose.emplace_back(0);
+      obj.covariance_pose.emplace_back(0);
+      obj.covariance_pose.emplace_back(0.2);
 
-    obj.covariance_pose.emplace_back(0);
-    obj.covariance_pose.emplace_back(0);
-    obj.covariance_pose.emplace_back(0.2);
+      obj.object.ids.emplace_back(i);
+      obj.object.ids_confidence.emplace_back(1.0);
+      obj.object.pose.position.x = P3D(0);
+      obj.object.pose.position.y = P3D(1);
+      obj.object.pose.position.z = depth;
+      obj.object.pose.orientation.x = 0.0;
+      obj.object.pose.orientation.y = 0.0;
+      obj.object.pose.orientation.z = 0.0;
+      obj.object.pose.orientation.w = 1.0;
+      
+      // std::cout << "position = (" << P3D(0) << ", " << P3D(1) << ", " << depth << ")" << std::endl;
 
-    obj.object.ids.emplace_back(i);
-    obj.object.ids_confidence.emplace_back(1.0);
-    obj.object.pose.position.x = P3D(0);
-    obj.object.pose.position.y = P3D(1);
-    obj.object.pose.position.z = depth;
-    obj.object.pose.orientation.x = 0.0;
-    obj.object.pose.orientation.y = 0.0;
-    obj.object.pose.orientation.z = 0.0;
-    obj.object.pose.orientation.w = 1.0;
-
-    detected_persons_tuw.objects.emplace_back(obj);
+      detected_persons_tuw.objects.emplace_back(obj);
+     }
   }
 
   personpub_.publish(detected_persons_tuw);
