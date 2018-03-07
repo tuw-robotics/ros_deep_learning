@@ -1,15 +1,15 @@
-#include "ros_detectnet.h"
+#include "ros_detectnet_monocular.h"
 
 namespace ros_deep_learning
 {
-ros_detectnet::~ros_detectnet()
+ros_detectnet_monocular::~ros_detectnet_monocular()
 {
   ROS_INFO("\nshutting down...\n");
   if (gpu_data_)
     CUDA(cudaFree(gpu_data_));
   delete net_;
 }
-void ros_detectnet::onInit()
+void ros_detectnet_monocular::onInit()
 {
   // get a private nodehandle
   ros::NodeHandle& private_nh = getPrivateNodeHandle();
@@ -32,15 +32,15 @@ void ros_detectnet::onInit()
 
   if (!net_)
   {
-    ROS_INFO("ros_detectnet: failed to initialize detectNet\n");
+    ROS_INFO("ros_detectnet_monocular: failed to initialize detectNet\n");
     return;
   }
 
-  gpsub_ = private_nh.subscribe("ground_plane", 100, &ros_detectnet::groundPlaneCallback, this);
+  gpsub_ = private_nh.subscribe("ground_plane", 100, &ros_detectnet_monocular::groundPlaneCallback, this);
 
   image_transport::ImageTransport it(private_nh);
 
-  camsub_ = it.subscribeCamera("imin", 10, &ros_detectnet::cameraCallback, this);
+  camsub_ = it.subscribeCamera("imin", 10, &ros_detectnet_monocular::cameraCallback, this);
 
   impub_ = it.advertise("image_out", 1);
 
@@ -50,8 +50,8 @@ void ros_detectnet::onInit()
   gpu_data_ = NULL;
 }
 
-void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
-                                   const sensor_msgs::CameraInfoConstPtr& camera_info)
+void ros_detectnet_monocular::cameraCallback(const sensor_msgs::ImageConstPtr& input,
+                                             const sensor_msgs::CameraInfoConstPtr& camera_info)
 {
   // camera matrix
   Eigen::Matrix<float, 3, 3> K;
@@ -70,7 +70,7 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
   cv::Mat cv_im = cv_bridge::toCvCopy(input, "bgr8")->image;
   cv::Mat cv_result;
 
-  ROS_DEBUG("ros_detectnet: image ptr at %p", cv_im.data);
+  ROS_DEBUG("ros_detectnet_monocular: image ptr at %p", cv_im.data);
   // convert bit depth
   cv_im.convertTo(cv_im, CV_32FC3);
   // convert color
@@ -79,12 +79,12 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
   // allocate GPU data if necessary
   if (gpu_data_ == NULL)
   {
-    ROS_DEBUG("ros_detectnet: first allocation");
+    ROS_DEBUG("ros_detectnet_monocular: first allocation");
     CUDA(cudaMalloc(&gpu_data_, cv_im.rows * cv_im.cols * sizeof(float4)));
   }
   else if (imgHeight_ != cv_im.rows || imgWidth_ != cv_im.cols)
   {
-    ROS_DEBUG("ros_detectnet: re allocation");
+    ROS_DEBUG("ros_detectnet_monocular: re allocation");
     // reallocate for a new image size if necessary
     CUDA(cudaFree(gpu_data_));
     CUDA(cudaMalloc(&gpu_data_, cv_im.rows * cv_im.cols * sizeof(float4)));
@@ -92,7 +92,7 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
 
   // allocate memory for output bounding boxes
   const uint32_t maxBoxes = net_->GetMaxBoundingBoxes();
-  ROS_DEBUG("ros_detectnet: maximum bounding boxes: %u\n", maxBoxes);
+  ROS_DEBUG("ros_detectnet_monocular: maximum bounding boxes: %u\n", maxBoxes);
   const uint32_t classes = net_->GetNumClasses();
 
   float* bbCPU = NULL;
@@ -103,7 +103,7 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
   if (!cudaAllocMapped((void**)&bbCPU, (void**)&bbCUDA, maxBoxes * sizeof(float4)) ||
       !cudaAllocMapped((void**)&confCPU, (void**)&confCUDA, maxBoxes * classes * sizeof(float)))
   {
-    ROS_ERROR("ros_detectnet: failed to alloc output memory\n");
+    ROS_ERROR("ros_detectnet_monocular: failed to alloc output memory\n");
   }
 
   int numBoundingBoxes = maxBoxes;
@@ -130,12 +130,12 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
       const int nc = confCPU[n * 2 + 1];
       float* bb = bbCPU + (n * 4);
 
-      ROS_INFO("ros_detectnet: bounding box %i   (%f, %f)  (%f, %f)  w=%f  h=%f\n", n, bb[0], bb[1], bb[2], bb[3],
-               bb[2] - bb[0], bb[3] - bb[1]);
+      ROS_INFO("ros_detectnet_monocular: bounding box %i   (%f, %f)  (%f, %f)  w=%f  h=%f\n", n, bb[0], bb[1], bb[2],
+               bb[3], bb[2] - bb[0], bb[3] - bb[1]);
 
       if (!net_->DrawBoxes((float*)gpu_data_, (float*)gpu_data_, imgWidth_, imgHeight_, bbCUDA + (lastStart * 4),
                            (n - lastStart) + 1, 0))
-        ROS_ERROR("ros_detectnet: failed to draw boxes\n");
+        ROS_ERROR("ros_detectnet_monocular: failed to draw boxes\n");
 
       // calculate ground center of bounding box
       Eigen::Vector3f P1_img;
@@ -155,7 +155,7 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
   }
   else
   {
-    ROS_ERROR("detectnet: detection error occured");
+    ROS_ERROR("ros_detectnet_monocular: detection error occured");
   }
 
   Eigen::Vector3f P0(0, 0, 0);
@@ -166,7 +166,7 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
 
   Eigen::Vector2f eigenvector1;
   Eigen::Vector2f eigenvector2;
-  double eigenvalue1 = 800; // 50
+  double eigenvalue1 = 800;  // 50
   double eigenvalue2 = 0.02;
 
   cv_result = cv::Mat(imgHeight_, imgWidth_, CV_32FC4, cpu_data);
@@ -182,7 +182,7 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
   detected_persons_tuw.view_direction.y = 0;
   detected_persons_tuw.view_direction.z = 0;
   detected_persons_tuw.sensor_type = tuw_object_msgs::ObjectDetection::SENSOR_TYPE_GENERIC_MONOCULAR_VISION;
-  
+
   for (size_t i = 0; i < center_points.size(); i++)
   {
     cv::circle(cv_result, cv::Point(center_points[i](0), center_points[i](1)), 2, cv::Scalar(0, 0, 255), -1, 8, 0);
@@ -255,7 +255,7 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
       obj.object.pose.orientation.w = 1.0;
 
       // filter inaccurate detections
-      if(std::hypot(P3D(0), P3D(2)) <= 9.0 && P3D(2) >= 0.0)
+      if (std::hypot(P3D(0), P3D(2)) <= 9.0 && P3D(2) >= 0.0)
       {
         detected_persons_tuw.objects.emplace_back(obj);
       }
@@ -266,7 +266,7 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
   impub_.publish(cv_bridge::CvImage(std_msgs::Header(), "bgr8", cv_result).toImageMsg());
 }
 
-void ros_detectnet::groundPlaneCallback(const rwth_perception_people_msgs::GroundPlane::ConstPtr& gp)
+void ros_detectnet_monocular::groundPlaneCallback(const rwth_perception_people_msgs::GroundPlane::ConstPtr& gp)
 {
   gp_ = gp;
 
