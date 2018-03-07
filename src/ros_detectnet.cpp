@@ -114,6 +114,7 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
   float4* cpu_data = (float4*)(cv_im.data);
 
   std::vector<Eigen::Vector3f> center_points;
+  std::vector<double> bb_heights;
 
   // copy to device
   CUDA(cudaMemcpy(gpu_data_, cpu_data, imgSize_, cudaMemcpyHostToDevice));
@@ -142,6 +143,7 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
       P1_img(1) = bb[3];
       P1_img(2) = 1;
       center_points.emplace_back(P1_img);
+      bb_heights.emplace_back(bb[3] - bb[1]);
 
       // copy back to host
       CUDA(cudaMemcpy(cpu_data, gpu_data_, imgSize_, cudaMemcpyDeviceToHost));
@@ -164,8 +166,8 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
 
   Eigen::Vector2f eigenvector1;
   Eigen::Vector2f eigenvector2;
-  double eigenvalue1 = 50.0;
-  double eigenvalue2 = 0.05;
+  double eigenvalue1 = 800; // 50
+  double eigenvalue2 = 0.02;
 
   cv_result = cv::Mat(imgHeight_, imgWidth_, CV_32FC4, cpu_data);
   cv_result.convertTo(cv_result, CV_8UC4);
@@ -193,7 +195,6 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
 
     if (denom != 0)
     {
-      std::cout << "denom != 0" << std::endl;
       P3D = P0 + nom / denom * P_diff;
 
       // move point P1 onto the ground plane s.t.
@@ -253,7 +254,11 @@ void ros_detectnet::cameraCallback(const sensor_msgs::ImageConstPtr& input,
       obj.object.pose.orientation.z = 0.0;
       obj.object.pose.orientation.w = 1.0;
 
-      detected_persons_tuw.objects.emplace_back(obj);
+      // filter inaccurate detections
+      if(std::hypot(P3D(0), P3D(2)) <= 9.0 && P3D(2) >= 0.0)
+      {
+        detected_persons_tuw.objects.emplace_back(obj);
+      }
     }
   }
 

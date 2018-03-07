@@ -19,7 +19,7 @@ add_definitions(${QT_DEFINITIONS})
 
 catkin_package(
     LIBRARIES ros_deep_learning_nodelets
-    CATKIN_DEPENDS nodelet roscpp cv_bridge image_transport sensor_msgs
+    CATKIN_DEPENDS nodelet roscpp cv_bridge image_transport sensor_msgs tuw_object_msgs rwth_perception_people_msgs
 )
 
 # the library we are going to compile (has all of the nodelets in it)
@@ -30,6 +30,9 @@ include_directories(
   ${catkin_INCLUDE_DIRS}
   ${CUDA_INCLUDE_DIRS}
 )
+
+add_dependencies(ros_deep_learning_nodelets ${catkin_EXPORTED_TARGETS})
+
 # compile option
 set_target_properties(ros_deep_learning_nodelets PROPERTIES COMPILE_FLAGS "-std=c++11")
 # link agains these objects
