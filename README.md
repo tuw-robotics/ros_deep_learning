@@ -18,6 +18,11 @@ For use on other platforms than jetson, adjust GPU architecture in CMakeLists.tx
 ```
 For reference see: https://github.com/dusty-nv/jetson-inference/issues/35
 
+Depending on the TensorRT installation, one possibly has to add its library path. Assuming TensorRT is installed in `/opt/TensorRT` the following has to be added to the CMakeLists.txt:
+```
+link_directories(/opt/TensorRT/lib)
+```
+
 ## ROS dependencies:
 * [tuw_common](https://github.com/tuw-robotics/tuw_common) ```check the INSTALL.md inside the pkg because it holds submodules```
   * [tuw_msgs](https://github.com/tuw-robotics/tuw_msgs)
