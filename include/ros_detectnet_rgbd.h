@@ -17,10 +17,9 @@
 #include <std_msgs/String.h>
 #include <std_msgs/Int32.h>
 
-#include <pluginlib/class_list_macros.h>
+#include <pluginlib/class_list_macros.hpp>
 #include <nodelet/nodelet.h>
 
-#include <rwth_perception_people_msgs/GroundPlane.h>
 #include <tuw_object_msgs/ObjectDetection.h>
 
 #include <eigen3/Eigen/Dense>
@@ -66,6 +65,6 @@ private:
   size_t imgSize_;
 };
 
-PLUGINLIB_DECLARE_CLASS(ros_deep_learning, ros_detectnet_rgbd, ros_deep_learning::ros_detectnet_rgbd, nodelet::Nodelet);
+PLUGINLIB_EXPORT_CLASS(ros_deep_learning::ros_detectnet_rgbd, nodelet::Nodelet);
 
 }  // namespace ros_deep_learning

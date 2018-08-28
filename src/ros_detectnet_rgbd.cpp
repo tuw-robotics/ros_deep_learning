@@ -213,7 +213,10 @@ void ros_detectnet_rgbd::cameraCallback(const sensor_msgs::ImageConstPtr& color_
 
     // check if bounding box is inside image
     if ((rect & cv::Rect(0, 0, cv_im_depth.cols, cv_im_depth.rows)) != rect)
+    {
+      ROS_WARN("bounding box outside of image, skipping frame");
       continue;
+    }
 
     cv::Mat bounding_box =
         cv_im_depth(cv::Rect(rect_upper_corner_x, rect_upper_corner_y, rect_width, rect_height)).clone();
@@ -223,14 +226,31 @@ void ros_detectnet_rgbd::cameraCallback(const sensor_msgs::ImageConstPtr& color_
     std::vector<float> bounding_box_vec;
     bounding_box.copyTo(bounding_box_vec);
 
-    std::nth_element(bounding_box_vec.begin(), bounding_box_vec.begin() + bounding_box_vec.size() / 2,
-                     bounding_box_vec.end());
+    bounding_box_vec.erase(std::remove_if(bounding_box_vec.begin(), bounding_box_vec.end(),
+                           [](double x){ return (std::isnan(x) || std::isinf(x)); }), bounding_box_vec.end());
 
-    double depth = double(bounding_box_vec[bounding_box_vec.size() / 2]);
+    double depth = 0;
 
-    // cv::rectangle(cv_result, cv::Rect(bounding_box_points[i](0), bounding_box_points[i](1), bounding_box_points[i](2)
-    // - bounding_box_points[i](0), bounding_box_points[i](3) - bounding_box_points[i](1)), cv::Scalar(0, 0, 255), -1,
-    // 8, 0);
+    // median depth
+    if(bounding_box_vec.size() % 2 == 0)
+    {
+      const auto median_it1 = bounding_box_vec.begin() + bounding_box_vec.size() / 2 - 1;
+      const auto median_it2 = bounding_box_vec.begin() + bounding_box_vec.size() / 2;
+
+
+      std::nth_element(bounding_box_vec.begin(), median_it1, bounding_box_vec.end());
+      const double median_1 = *median_it1;
+      std::nth_element(bounding_box_vec.begin(), median_it2, bounding_box_vec.end());
+      const double median_2 = *median_it2;
+
+      depth = (median_1 + median_2) / 2;
+    }
+    else
+    {
+      const auto median_it = bounding_box_vec.begin() + bounding_box_vec.size() / 2;
+      std::nth_element(bounding_box_vec.begin(), median_it, bounding_box_vec.end());
+      depth = *median_it;
+    }
 
     P3D = K_inv * center_points[i];
 

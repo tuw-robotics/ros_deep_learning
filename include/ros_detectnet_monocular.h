@@ -17,7 +17,7 @@
 #include <std_msgs/String.h>
 #include <std_msgs/Int32.h>
 
-#include <pluginlib/class_list_macros.h>
+#include <pluginlib/class_list_macros.hpp>
 #include <nodelet/nodelet.h>
 
 #include <rwth_perception_people_msgs/GroundPlane.h>
